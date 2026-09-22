@@ -1,0 +1,16 @@
+{
+  "name": "fuel-web",
+  "version": "1.0.0",
+  "description": "1Gallon customer & driver web app",
+  "scripts": {
+    "dev": "nuxt dev --port 3002",
+    "build": "nuxt build",
+    "preview": "nuxt preview"
+  },
+  "dependencies": {
+    "maplibre-gl": "^4.7.1",
+    "nuxt": "3.21.4",
+    "socket.io-client": "^4.8.1",
+    "vue": "^3.5.13"
+  }
+}
