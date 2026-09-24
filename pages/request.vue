@@ -5,6 +5,7 @@
       :center="pin"
       :show-pin="step === 'location'"
       :markers="markers"
+      :route="step === 'location' ? [] : routePoints"
       :interactive="true"
       @ready="onReady"
     />
@@ -14,7 +15,25 @@
       <button v-if="step === 'location'" class="locate-btn" type="button" @click="recenter">◎</button>
     </div>
 
-    <BottomSheet :tall="step !== 'location' || searchFocused">
+    <div v-if="step !== 'location' && selectedStation" class="eta-float">
+      <div class="eta-pills">
+        <span>
+          <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 21s6-5.2 6-10a6 6 0 1 0-12 0c0 4.8 6 10 6 10Zm0-8.2a1.8 1.8 0 1 1 0-3.6 1.8 1.8 0 0 1 0 3.6Z"/></svg>
+          {{ overlayDistance }}
+        </span>
+        <span>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="8"/><path d="M12 8v4l2.5 1.5"/></svg>
+          {{ overlayDuration }}
+        </span>
+      </div>
+      <p>{{ placeShort }}</p>
+    </div>
+
+    <BottomSheet
+      class="request-sheet"
+      :class="{ 'is-stations': step === 'stations' }"
+      :tall="step === 'checkout' || (step === 'location' && searchFocused)"
+    >
       <!-- LOCATION -->
       <template v-if="step === 'location'">
         <p class="eyebrow">Step 1 of 3</p>
@@ -45,7 +64,23 @@
             </button>
           </div>
 
-          <div v-if="searchFocused && searchQ.trim().length >= 2" class="suggest-panel">
+          <div v-if="showRecent" class="suggest-panel">
+            <p class="suggest-head">Recent</p>
+            <div v-for="s in recent" :key="s.id + s.lat" class="suggest-item">
+              <button type="button" class="suggest-main" @click="pickPlace(s)">
+                <span class="suggest-pin recent-pin" aria-hidden="true">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M4 12a8 8 0 1 0 2.2-5.5"/><path d="M4 4v5h5"/><path d="M12 8v4l2.5 1.5"/></svg>
+                </span>
+                <span class="suggest-text">
+                  <strong>{{ s.name }}</strong>
+                  <small v-if="secondary(s)">{{ secondary(s) }}</small>
+                </span>
+              </button>
+              <button type="button" class="suggest-remove" aria-label="Remove" @click="dropRecent(s)">×</button>
+            </div>
+          </div>
+
+          <div v-else-if="searchFocused && searchQ.trim().length >= 2" class="suggest-panel">
             <div v-if="searchLoading" class="suggest-status">
               <div class="spinner" style="width: 18px; height: 18px; border-width: 2px" />
               Searching…
@@ -96,13 +131,27 @@
           @click="selectStation(st)"
         >
           <div class="station-top">
-            <strong>{{ st.name || st.stationName }}</strong>
-            <span v-if="st.distanceKm != null" class="chip">{{ Number(st.distanceKm).toFixed(1) }} km</span>
-          </div>
-          <div class="price-row">
-            <span v-for="ft in fuelTypes" :key="ft">
-              {{ fuelLabel(ft) }}
-              <b>{{ priceFor(st, ft) }}</b>
+            <span class="station-logo">
+              <img
+                v-if="logoOf(st) && !brokenLogos[st._id || st.id]"
+                :src="logoOf(st)!"
+                alt=""
+                @error="brokenLogos[st._id || st.id] = true"
+              />
+              <svg v-else viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 3h7v18H6a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1Zm8 4h2.2A2.8 2.8 0 0 1 19 9.8V16a2 2 0 1 0 4 0v-4.2L20.2 9H14V7Z"/></svg>
+            </span>
+            <div class="station-copy">
+              <strong>{{ st.name || st.stationName }}</strong>
+              <div class="price-row">
+                <span v-for="ft in fuelTypes" :key="ft">
+                  {{ fuelLabel(ft) }}
+                  <b>{{ priceFor(st, ft) }}</b>
+                </span>
+              </div>
+            </div>
+            <span class="station-meta">
+              <span class="chip">{{ cardDistance(st) }}</span>
+              <span class="chip chip-time">{{ cardDuration(st) }}</span>
             </span>
           </div>
         </button>
@@ -217,8 +266,16 @@ import {
   paymentLabel,
   isPrepaid,
   formatGhs,
+  fetchDrivingRoute,
 } from '~/utils/format'
 import { searchPlaces, reverseGeocode, type PlaceSuggestion } from '~/utils/places'
+import { resolveMediaUrl } from '~/utils/media'
+import {
+  loadRecentLocations,
+  saveRecentLocation,
+  removeRecentLocation,
+  placeFromAddress,
+} from '~/utils/recentLocations'
 
 definePageMeta({ layout: 'customer' })
 
@@ -234,6 +291,15 @@ const address = ref('')
 const geocoding = ref(false)
 const searchQ = ref('')
 const suggestions = ref<PlaceSuggestion[]>([])
+const recent = ref<PlaceSuggestion[]>(loadRecentLocations())
+const showRecent = computed(
+  () => step.value === 'location' && !searchQ.value.trim() && !suggestions.value.length && recent.value.length > 0,
+)
+const secondary = (s: PlaceSuggestion) => {
+  const full = s.fullName.trim()
+  if (!full || full === s.name) return ''
+  return full.startsWith(`${s.name},`) ? full.slice(s.name.length + 1).trim() : full
+}
 const searchLoading = ref(false)
 const searchFocused = ref(false)
 const searchInput = ref<HTMLInputElement | null>(null)
@@ -246,6 +312,10 @@ const selectedStationId = ref('')
 const selectedStation = computed(() =>
   stations.value.find((s) => (s._id || s.id) === selectedStationId.value),
 )
+const brokenLogos = reactive<Record<string, boolean>>({})
+const routePoints = ref<{ lat: number; lng: number }[]>([])
+const routeMeta = ref<{ distanceMeters: number; durationSeconds: number } | null>(null)
+let routeSeq = 0
 
 const fuelTypes = FUEL_TYPES
 const paymentMethods = PAYMENT_METHODS
@@ -257,22 +327,116 @@ const notes = ref('')
 const submitting = ref(false)
 const submitError = ref('')
 
+const stationPoint = (st: any) => {
+  const c = st?.location?.coordinates
+  if (!Array.isArray(c) || c.length < 2) return null
+  const lng = Number(c[0])
+  const lat = Number(c[1])
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null
+  return { lat, lng }
+}
+
 const markers = computed(() => {
-  const m = [{ id: 'pin', ...pin.value, color: '#e84b1a', label: 'Delivery' }]
-  if (selectedStation.value) {
-    const c = selectedStation.value.location?.coordinates
-    if (Array.isArray(c) && c.length >= 2) {
-      m.push({
-        id: 'station',
-        lat: c[1],
-        lng: c[0],
-        color: '#0d0d0d',
-        label: selectedStation.value.name,
-      })
-    }
+  if (step.value === 'location') return []
+  const m: any[] = [{ id: 'pin', ...pin.value, color: '#e84b1a', label: placeShort.value, kind: 'drop' }]
+  for (const st of stations.value) {
+    const point = stationPoint(st)
+    if (!point) continue
+    const selected = (st._id || st.id) === selectedStationId.value
+    m.push({
+      id: `st-${st._id || st.id}`,
+      ...point,
+      color: selected ? '#e84b1a' : '#0d0d0d',
+      label: st.name || st.stationName,
+    })
   }
-  return step.value === 'location' ? [] : m
+  return m
 })
+
+const placeShort = computed(() => {
+  const name = address.value.trim()
+  return name ? name.split(',')[0] : 'Delivery'
+})
+
+const distanceLabel = (meters: number) => {
+  if (meters >= 1000) return `${(meters / 1000).toFixed(1)} km`
+  return `${Math.round(meters)} m`
+}
+
+const durationLabel = (seconds: number) => {
+  const mins = Math.min(999, Math.max(1, Math.ceil(seconds / 60)))
+  if (mins < 60) return `${mins} min`
+  const h = Math.floor(mins / 60)
+  const m = mins % 60
+  return m ? `${h}h ${m}m` : `${h}h`
+}
+
+const overlayDistance = computed(() => {
+  if (routeMeta.value) return distanceLabel(routeMeta.value.distanceMeters)
+  const km = selectedStation.value?.distanceKm
+  return km == null ? '— km' : `${Number(km).toFixed(1)} km`
+})
+
+const overlayDuration = computed(() => {
+  if (routeMeta.value) return durationLabel(routeMeta.value.durationSeconds)
+  const mins = selectedStation.value?.etaMinutes
+  return mins == null ? '— min' : `${mins} min`
+})
+
+const isSelected = (st: any) => (st._id || st.id) === selectedStationId.value
+
+const cardDistance = (st: any) => {
+  if (isSelected(st) && routeMeta.value) return distanceLabel(routeMeta.value.distanceMeters)
+  return st.distanceKm == null ? '— km' : `${Number(st.distanceKm).toFixed(1)} km`
+}
+
+const cardDuration = (st: any) => {
+  if (isSelected(st) && routeMeta.value) return durationLabel(routeMeta.value.durationSeconds)
+  return st.etaMinutes == null ? '— min' : `${st.etaMinutes} min`
+}
+
+const logoOf = (st: any) => resolveMediaUrl(st.imageUrl || st.logoUrl)
+
+const haversineKm = (a: { lat: number; lng: number }, b: { lat: number; lng: number }) => {
+  const toRad = (d: number) => (d * Math.PI) / 180
+  const dLat = toRad(b.lat - a.lat)
+  const dLng = toRad(b.lng - a.lng)
+  const h =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(toRad(a.lat)) * Math.cos(toRad(b.lat)) * Math.sin(dLng / 2) ** 2
+  return 6371 * 2 * Math.atan2(Math.sqrt(h), Math.sqrt(1 - h))
+}
+
+const loadRoute = async (st: any) => {
+  const from = stationPoint(st)
+  if (!from) {
+    routePoints.value = []
+    routeMeta.value = null
+    return
+  }
+  const seq = ++routeSeq
+  const road = await fetchDrivingRoute(from, pin.value)
+  if (seq !== routeSeq) return
+  const km = haversineKm(from, pin.value)
+  const info = road || {
+    points: [from, pin.value],
+    distanceMeters: km * 1000,
+    durationSeconds: Math.max(60, Math.round((km / 25) * 3600)),
+  }
+  routePoints.value = info.points
+  routeMeta.value = {
+    distanceMeters: info.distanceMeters,
+    durationSeconds: info.durationSeconds,
+  }
+  nextTick(() => {
+    mapRef.value?.fitBounds?.([from, pin.value, ...info.points], {
+      top: 96,
+      bottom: Math.round(window.innerHeight * 0.5),
+      left: 48,
+      right: 48,
+    })
+  })
+}
 
 const priceFor = (st: any, ft: string) => {
   const inv = st.inventory || st.fuels || []
@@ -337,12 +501,22 @@ const clearSearch = () => {
   searchInput.value?.focus()
 }
 
+const rememberPlace = (place: PlaceSuggestion | null) => {
+  if (!place) return
+  recent.value = saveRecentLocation(place)
+}
+
+const dropRecent = (place: PlaceSuggestion) => {
+  recent.value = removeRecentLocation(place)
+}
+
 const pickPlace = (s: PlaceSuggestion) => {
   pin.value = { lat: s.lat, lng: s.lng }
   address.value = s.fullName
-  searchQ.value = s.fullName
+  searchQ.value = ''
   suggestions.value = []
   searchFocused.value = false
+  rememberPlace(s)
   mapRef.value?.flyTo?.(s.lat, s.lng, 16)
 }
 
@@ -355,6 +529,7 @@ const confirmLocation = async () => {
         token: config.public.mapboxToken,
       })
     }
+    rememberPlace(placeFromAddress(pin.value.lat, pin.value.lng, address.value))
     step.value = 'stations'
     await loadStations()
   } finally {
@@ -372,6 +547,13 @@ const loadStations = async () => {
       limit: 20,
     })
     stations.value = res.data?.stations || res.data || []
+    const first = stations.value[0]
+    selectedStationId.value = first ? first._id || first.id : ''
+    if (first) await loadRoute(first)
+    else {
+      routePoints.value = []
+      routeMeta.value = null
+    }
   } catch {
     stations.value = []
   } finally {
@@ -381,6 +563,7 @@ const loadStations = async () => {
 
 const selectStation = (st: any) => {
   selectedStationId.value = st._id || st.id
+  loadRoute(st)
 }
 
 const refreshQuote = async () => {
@@ -401,6 +584,11 @@ const refreshQuote = async () => {
 
 watch(step, (s) => {
   if (s === 'checkout') refreshQuote()
+  if (s === 'location') {
+    routePoints.value = []
+    routeMeta.value = null
+  }
+  if (s === 'stations' && selectedStation.value) loadRoute(selectedStation.value)
 })
 
 watch([fuelType, qty, inputMode, selectedStationId], () => refreshQuote())
@@ -501,6 +689,39 @@ const goBack = () => {
   overflow-y: auto;
   box-shadow: var(--shadow);
 }
+.suggest-head {
+  padding: 12px 14px 4px;
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 500;
+}
+.suggest-item {
+  align-items: center;
+}
+.suggest-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  text-align: left;
+  background: transparent;
+}
+.suggest-remove {
+  width: 32px;
+  height: 32px;
+  flex-shrink: 0;
+  color: var(--muted);
+  font-size: 1.1rem;
+  background: transparent;
+}
+.recent-pin {
+  color: var(--accent);
+}
+.recent-pin svg {
+  width: 16px;
+  height: 16px;
+}
 .suggest-status {
   display: flex;
   align-items: center;
@@ -560,10 +781,46 @@ const goBack = () => {
   font-size: 0.92rem;
   font-weight: 500;
 }
+.request-sheet.is-stations {
+  max-height: 58dvh;
+}
+.eta-float {
+  position: absolute;
+  z-index: 6;
+  top: 76px;
+  left: 16px;
+  right: 16px;
+  pointer-events: none;
+}
+.eta-pills {
+  display: flex;
+  gap: 6px;
+}
+.eta-pills span {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 5px 8px;
+  border-radius: 8px;
+  background: rgba(232, 75, 26, 0.1);
+  border: 1px solid rgba(232, 75, 26, 0.28);
+  color: var(--accent);
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+.eta-pills svg {
+  width: 13px;
+  height: 13px;
+}
+.eta-float p {
+  margin-top: 6px;
+  font-weight: 600;
+  font-size: 0.95rem;
+}
 .station-card {
   width: 100%;
   text-align: left;
-  padding: 14px;
+  padding: 12px;
   border-radius: 14px;
   border: 1.5px solid var(--border);
   background: var(--white);
@@ -575,9 +832,47 @@ const goBack = () => {
 }
 .station-top {
   display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 8px;
+  align-items: flex-start;
+  gap: 12px;
+}
+.station-logo {
+  width: 52px;
+  height: 52px;
+  border-radius: 10px;
+  overflow: hidden;
+  background: var(--paper);
+  color: var(--accent);
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+}
+.station-logo img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.station-logo svg {
+  width: 24px;
+  height: 24px;
+}
+.station-copy {
+  flex: 1;
+  min-width: 0;
+}
+.station-copy strong {
+  display: block;
+  margin-bottom: 6px;
+}
+.station-meta {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 6px;
+  flex-shrink: 0;
+}
+.chip-time {
+  background: rgba(232, 75, 26, 0.1);
+  color: var(--accent);
 }
 .price-row {
   display: flex;

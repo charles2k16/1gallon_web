@@ -50,6 +50,14 @@
         </span>
         <span class="chev">›</span>
       </NuxtLink>
+      <NuxtLink class="menu-tile" to="/profile/help">
+        <span class="menu-ico">?</span>
+        <span class="menu-copy">
+          <strong>Help & support</strong>
+          <small>Call, WhatsApp, and social</small>
+        </span>
+        <span class="chev">›</span>
+      </NuxtLink>
     </div>
 
     <button class="btn btn-ghost btn-block sign-out" @click="auth.logout()">Sign out</button>

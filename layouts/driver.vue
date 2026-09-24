@@ -19,6 +19,7 @@
 const route = useRoute()
 const isMapPage = computed(() => route.path.startsWith('/driver/order'))
 const alert = useDriverOfferAlert()
+const desktop = useDesktopNotify()
 const { connect, on } = useSocket()
 
 const paymentNotice = ref<{ title: string; message: string; orderId: string } | null>(null)
@@ -33,11 +34,15 @@ const openPayment = () => {
 const showPayment = (payload: any) => {
   const orderId = String(payload?.orderId || '')
   if (!orderId) return
-  paymentNotice.value = {
-    orderId,
-    title: payload?.title || 'Payment received',
-    message: payload?.message || 'Customer paid successfully. You can start the trip.',
-  }
+  const title = payload?.title || 'Payment received'
+  const message = payload?.message || 'Customer paid successfully. You can start the trip.'
+  paymentNotice.value = { orderId, title, message }
+  desktop.notify({
+    title,
+    body: message,
+    tag: orderId,
+    path: `/driver/order/${orderId}`,
+  })
   try {
     const tone = new Audio('/sounds/ringtone-notify.mp3')
     tone.play().catch(() => {})
@@ -55,6 +60,7 @@ const showPayment = (payload: any) => {
 }
 
 onMounted(() => {
+  desktop.arm()
   alert.bind()
   connect()
   on('order:payment', showPayment)

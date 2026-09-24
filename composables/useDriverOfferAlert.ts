@@ -17,6 +17,7 @@ export const useDriverOfferAlert = () => {
   const { get } = useApi()
   const { connect, on } = useSocket()
   const auth = useAuth()
+  const desktop = useDesktopNotify()
 
   const isOnline = computed(() => {
     const u = auth.user.value
@@ -61,11 +62,35 @@ export const useDriverOfferAlert = () => {
   const bind = () => {
     if (!import.meta.client || listening) return
     listening = true
+    const notifyOffer = (payload: any) => {
+      const orderId = String(payload?.orderId || '')
+      desktop.notify({
+        title: payload?.title || 'New delivery offer',
+        body: payload?.message || 'A new fuel delivery is available',
+        tag: orderId || 'offer',
+        path: '/driver',
+      })
+      refresh()
+    }
+
+    const notifyCancel = (payload: any) => {
+      const orderId = String(payload?.orderId || '')
+      if (orderId) {
+        desktop.notify({
+          title: payload?.title || 'Order cancelled',
+          body: payload?.message || 'A delivery was cancelled',
+          tag: orderId,
+          path: '/driver',
+        })
+      }
+      refresh()
+    }
+
     connect()
-    on('order:new', () => refresh())
-    on('order:offer', () => refresh())
+    on('order:new', notifyOffer)
+    on('order:offer', notifyOffer)
     on('order:taken', () => refresh())
-    on('order:cancelled', () => refresh())
+    on('order:cancelled', notifyCancel)
     on('order:updated', () => refresh())
     refresh()
 

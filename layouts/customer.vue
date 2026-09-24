@@ -9,6 +9,6 @@
 const route = useRoute()
 const isMapPage = computed(() => {
   const p = route.path
-  return p === '/home' || p === '/request' || p.startsWith('/tracking')
+  return p === '/request' || p.startsWith('/tracking')
 })
 </script>

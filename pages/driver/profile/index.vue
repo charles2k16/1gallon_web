@@ -258,7 +258,7 @@ const sheets = [
 const legal = [
   { to: '/profile/privacy', title: 'Privacy policy', subtitle: 'How we handle your data', icon: icons.shield },
   { to: '/profile/terms', title: 'Terms & conditions', subtitle: 'Rules for using 1Gallon', icon: icons.doc },
-  { to: '/driver/profile/help', title: 'Help & support', subtitle: 'Get help with deliveries', icon: icons.help },
+  { to: '/profile/help', title: 'Help & support', subtitle: 'Get help with deliveries', icon: icons.help },
 ]
 
 onMounted(async () => {
