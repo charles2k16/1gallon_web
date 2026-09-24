@@ -157,7 +157,7 @@
         </button>
 
         <button
-          class="btn btn-primary btn-block"
+          class="btn btn-accent btn-block"
           style="margin-top: 12px"
           :disabled="!selectedStationId"
           @click="step = 'checkout'"
@@ -168,80 +168,114 @@
 
       <!-- CHECKOUT -->
       <template v-else>
-        <p class="eyebrow">Step 3 of 3</p>
-        <h1 class="sheet-title">Checkout</h1>
-        <p class="sheet-sub">{{ selectedStation?.name || selectedStation?.stationName }}</p>
+        <h1 class="checkout-title">Checkout</h1>
 
-        <div class="seg fuel-seg" style="margin-bottom: 14px">
+        <div class="checkout-place">
+          <span class="checkout-pin" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 21s6-5.2 6-10a6 6 0 1 0-12 0c0 4.8 6 10 6 10Zm0-8.2a1.8 1.8 0 1 1 0-3.6 1.8 1.8 0 0 1 0 3.6Z"/></svg>
+          </span>
+          <span>
+            <strong>{{ address || 'Delivery location' }}</strong>
+            <small>{{ selectedStation?.name || selectedStation?.stationName }}</small>
+          </span>
+        </div>
+
+        <h2 class="section-gap">Select your fuel type!</h2>
+        <div class="fuel-cards">
           <button
-            v-for="ft in fuelTypes"
+            v-for="ft in checkoutFuels"
             :key="ft"
             type="button"
-            :class="{ active: fuelType === ft }"
+            class="fuel-card"
+            :class="{ on: fuelType === ft }"
             @click="fuelType = ft; refreshQuote()"
           >
-            {{ fuelLabel(ft) }}
+            <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 3h7v18H6a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1Zm8 4h2.2A2.8 2.8 0 0 1 19 9.8V16a2 2 0 1 0 4 0v-4.2L20.2 9H14V7Z"/></svg>
+            <strong>{{ fuelCardLabel(ft) }}</strong>
+            <span>{{ priceFor(selectedStation, ft) }}/L</span>
           </button>
         </div>
 
-        <div class="seg" style="margin-bottom: 14px">
-          <button type="button" :class="{ active: inputMode === 'litres' }" @click="inputMode = 'litres'; refreshQuote()">
+        <h2 class="section-gap">How much?</h2>
+        <div class="qty-toggle">
+          <button type="button" :class="{ on: inputMode === 'litres' }" @click="inputMode = 'litres'; refreshQuote()">
             By litres
           </button>
-          <button type="button" :class="{ active: inputMode === 'amount' }" @click="inputMode = 'amount'; refreshQuote()">
-            By amount
+          <button type="button" :class="{ on: inputMode === 'amount' }" @click="inputMode = 'amount'; refreshQuote()">
+            By amount (GHS)
+          </button>
+        </div>
+        <label class="qty-label">{{ inputMode === 'litres' ? 'Litres' : 'Budget (GHS)' }}</label>
+        <input
+          v-model.number="qty"
+          class="qty-input"
+          type="number"
+          min="5"
+          step="0.1"
+          @change="refreshQuote"
+        />
+
+        <div v-if="quote" class="checkout-line" style="margin-top: 12px">
+          <span class="checkout-pin" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="currentColor"><path d="M6 3h7v18H6a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1Zm8 4h2.2A2.8 2.8 0 0 1 19 9.8V16a2 2 0 1 0 4 0v-4.2L20.2 9H14V7Z"/></svg>
+          </span>
+          <span>
+            <strong>{{ fuelDescription(fuelType) }} · {{ Number(quote.litres).toFixed(0) }} L</strong>
+            <small>{{ formatGhs(quote.pricePerLitre) }}/L</small>
+          </span>
+          <em>{{ Number(quote.litres).toFixed(0) }} L</em>
+        </div>
+
+        <p class="arrival">
+          Arrival in
+          <span>{{ overlayDuration }}</span>
+        </p>
+
+        <h2>Payment method</h2>
+        <div class="pay-row">
+          <button
+            v-for="pm in paymentMethods"
+            :key="pm"
+            type="button"
+            class="pay-tile"
+            :class="{ on: paymentMethod === pm }"
+            @click="paymentMethod = pm"
+          >
+            <svg v-if="pm === 'cash_on_delivery'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><rect x="3" y="6" width="18" height="13" rx="2"/><path d="M3 10h18M7 15h4"/></svg>
+            <svg v-else-if="pm === 'card'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 10h18"/></svg>
+            <svg v-else viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><rect x="8" y="3" width="8" height="18" rx="2"/><path d="M11 18h2"/></svg>
+            {{ paymentLabel(pm) }}
           </button>
         </div>
 
-        <div class="field" style="margin-bottom: 14px">
-          <label>{{ inputMode === 'litres' ? 'Litres' : 'Amount (GHS)' }}</label>
-          <input
-            v-model.number="qty"
-            class="input input-lg"
-            type="number"
-            min="5"
-            step="0.1"
-            @change="refreshQuote"
-          />
-        </div>
+        <p class="pay-hint">
+          {{
+            isPrepaid(paymentMethod)
+              ? 'Pay after your driver accepts — you\'ll see them before you pay.'
+              : 'Pay the driver when your fuel is delivered.'
+          }}
+        </p>
 
-        <div class="field" style="margin-bottom: 14px">
-          <label>Payment</label>
-          <div class="pay-opts">
-            <button
-              v-for="pm in paymentMethods"
-              :key="pm"
-              type="button"
-              class="pay-opt"
-              :class="{ active: paymentMethod === pm }"
-              @click="paymentMethod = pm"
-            >
-              {{ paymentLabel(pm) }}
-            </button>
-          </div>
-          <p class="muted" style="font-size: 0.8rem; margin-top: 8px">
-            {{
-              isPrepaid(paymentMethod)
-                ? 'Pay after your driver accepts — you\'ll see them before you pay.'
-                : 'Pay the driver when your fuel is delivered.'
-            }}
-          </p>
-        </div>
+        <label class="qty-label" for="order-notes">Notes</label>
+        <textarea
+          id="order-notes"
+          v-model="notes"
+          class="qty-input notes"
+          maxlength="200"
+          rows="2"
+          placeholder="Gate code, landmark, or anything the rider should know"
+        />
 
-        <div class="field" style="margin-bottom: 14px">
-          <label>Notes (optional)</label>
-          <input v-model="notes" class="input" maxlength="200" placeholder="Gate code, landmark…" />
-        </div>
-
-        <div v-if="quote" class="quote-box">
-          <div class="quote-line"><span>Fuel</span><strong>{{ formatGhs(quote.fuelAmount) }}</strong></div>
-          <div class="quote-line"><span>Delivery</span><strong>{{ formatGhs(quote.deliveryFee) }}</strong></div>
-          <div class="quote-line total"><span>Total</span><strong>{{ formatGhs(quote.totalAmount) }}</strong></div>
-          <p v-if="quote.litres" class="muted" style="font-size: 0.8rem; margin-top: 6px">
+        <div v-if="quote" class="summary">
+          <div><span>Fuel</span><strong>{{ formatGhs(quote.fuelAmount) }}</strong></div>
+          <div><span>Delivery</span><strong>{{ formatGhs(quote.deliveryFee) }}</strong></div>
+          <div class="total"><span>Total</span><strong>{{ formatGhs(quote.totalAmount) }}</strong></div>
+          <p>
             {{ Number(quote.litres).toFixed(1) }} L · {{ formatGhs(quote.pricePerLitre) }}/L
-            <span v-if="quote.deliveryDistanceKm"> · {{ Number(quote.deliveryDistanceKm).toFixed(1) }} km</span>
+            <template v-if="quote.deliveryDistanceKm"> · {{ Number(quote.deliveryDistanceKm).toFixed(1) }} km</template>
           </p>
         </div>
+
         <p v-if="quoteError" class="error-text">{{ quoteError }}</p>
         <p v-if="submitError" class="error-text">{{ submitError }}</p>
 
@@ -251,7 +285,7 @@
           :disabled="submitting || !quote"
           @click="placeOrder"
         >
-          {{ submitting ? 'Placing order…' : 'Place order →' }}
+          {{ submitting ? 'Requesting fuel…' : 'Request fuel' }}
         </button>
       </template>
     </BottomSheet>
@@ -318,6 +352,23 @@ const routeMeta = ref<{ distanceMeters: number; durationSeconds: number } | null
 let routeSeq = 0
 
 const fuelTypes = FUEL_TYPES
+const fuelOrder = ['diesel', 'petrol', 'super']
+const checkoutFuels = computed(() => {
+  const available = new Set(
+    (selectedStation.value?.fuels || selectedStation.value?.inventory || [])
+      .filter((i: any) => i.isAvailable !== false)
+      .map((i: any) => i.fuelType || i.type),
+  )
+  const list = fuelOrder.filter((ft) => !available.size || available.has(ft))
+  return list.length ? list : [...fuelOrder]
+})
+const fuelCardLabel = (ft: string) => ({ diesel: 'DIESEL', petrol: 'REGULAR', super: 'SUPER' }[ft] || ft.toUpperCase())
+const fuelDescription = (ft: string) =>
+  ({
+    petrol: 'Regular Petrol (PMS)',
+    super: 'Super Petrol',
+    diesel: 'Automotive Gas Oil (Diesel)',
+  }[ft] || fuelLabel(ft))
 const paymentMethods = PAYMENT_METHODS
 const fuelType = ref('petrol')
 const inputMode = ref<'litres' | 'amount'>('litres')
@@ -884,6 +935,227 @@ const goBack = () => {
 .price-row b {
   color: var(--ink);
   margin-left: 4px;
+}
+.checkout-title {
+  font-size: 1.15rem;
+  font-weight: 600;
+  margin-bottom: 12px;
+}
+.checkout-place,
+.checkout-line {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 14px;
+  background-color: #fff;
+  padding: 12px;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+}
+.checkout-place strong,
+.checkout-line strong {
+  display: block;
+  font-size: 0.92rem;
+  font-weight: 600;
+}
+.checkout-place small,
+.checkout-line small {
+  display: block;
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+.checkout-pin {
+  width: 40px;
+  height: 40px;
+  border-radius: 12px;
+  background: rgba(232, 75, 26, 0.1);
+  color: var(--accent);
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+}
+.checkout-pin svg {
+  width: 20px;
+  height: 20px;
+}
+.checkout-line em {
+  margin-left: auto;
+  font-style: normal;
+  color: var(--accent);
+  font-weight: 600;
+  font-size: 0.85rem;
+}
+h2 {
+  margin: 0 0 10px;
+  font-size: 0.95rem;
+  font-weight: 600;
+}
+.section-gap {
+  margin-top: 22px;
+}
+.fuel-cards {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+}
+.fuel-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 16px 8px;
+  border-radius: 16px;
+  border: 1px solid var(--border);
+  background: var(--white);
+  color: var(--ink);
+  box-shadow: 0 1px 2px rgba(13, 13, 13, 0.04);
+}
+.fuel-card svg {
+  width: 22px;
+  height: 22px;
+}
+.fuel-card strong {
+  font-size: 0.72rem;
+  letter-spacing: 0.04em;
+}
+.fuel-card span {
+  font-size: 0.68rem;
+  color: var(--muted);
+}
+.fuel-card.on {
+  background: rgba(232, 75, 26, 0.1);
+  border: 1.5px solid rgba(232, 75, 26, 0.45);
+  color: var(--accent);
+}
+.fuel-card.on span {
+  color: var(--accent);
+}
+.qty-toggle {
+  display: flex;
+  padding: 4px;
+  border-radius: 16px;
+  background: var(--white);
+  border: 1px solid var(--border);
+}
+.qty-toggle button {
+  flex: 1;
+  padding: 10px 8px;
+  border-radius: 12px;
+  color: var(--muted);
+  font-size: 0.82rem;
+  font-weight: 500;
+}
+.qty-toggle button.on {
+  background: var(--ink);
+  color: #fff;
+  font-weight: 700;
+}
+.qty-label {
+  display: block;
+  margin: 14px 0 6px;
+  color: var(--ink);
+  font-size: 0.78rem;
+  font-weight: 600;
+}
+.qty-input {
+  width: 100%;
+  padding: 14px 16px;
+  border: 1.5px solid var(--border);
+  border-radius: 12px;
+  background: var(--white);
+  color: var(--ink);
+  font-size: 1rem;
+  font-weight: 600;
+}
+.qty-input:focus {
+  outline: none;
+  border-color: var(--ink);
+}
+.qty-input.notes {
+  margin-top: 0;
+  min-height: 72px;
+  resize: vertical;
+  font-weight: 500;
+  font-family: inherit;
+}
+.arrival {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 0.82rem;
+  margin: 4px 0 8px;
+}
+.arrival span {
+  padding: 4px 10px;
+  border-radius: 20px;
+  background: rgba(232, 75, 26, 0.12);
+  color: var(--accent);
+  font-weight: 500;
+}
+.pay-row {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+}
+.pay-tile {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 12px 6px;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  background: var(--white);
+  color: var(--ink);
+  font-size: 0.68rem;
+  font-weight: 600;
+  text-align: center;
+  box-shadow: 0 1px 2px rgba(13, 13, 13, 0.04);
+}
+.pay-tile svg {
+  width: 20px;
+  height: 20px;
+}
+.pay-tile.on {
+  background: var(--ink);
+  border-color: var(--ink);
+  color: #fff;
+}
+.summary {
+  margin-top: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 16px;
+  border-radius: 16px;
+  background: var(--ink);
+  color: #fff;
+}
+.summary div {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 0.95rem;
+}
+.summary .total {
+  margin-top: 2px;
+  padding-top: 10px;
+  border-top: 1px solid rgba(255, 255, 255, 0.2);
+  font-weight: 700;
+}
+.summary .total strong {
+  font-size: 1.05rem;
+}
+.summary p {
+  color: rgba(255, 255, 255, 0.55);
+  font-size: 0.75rem;
+}
+.pay-hint {
+  margin-top: 8px;
+  color: var(--muted);
+  font-size: 0.78rem;
+  line-height: 1.4;
 }
 .pay-opts {
   display: flex;

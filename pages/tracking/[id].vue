@@ -31,6 +31,11 @@
         <h1 class="sheet-title">{{ statusLabel(order.status) }}</h1>
         <StatusPipeline :status="order.status" />
 
+        <div v-if="findingDriver" class="searching" role="status">
+          <div class="searching__bar" aria-hidden="true"><span /></div>
+          <p>Searching available riders nearby.</p>
+        </div>
+
         <div class="quote-mini">
           <div>
             <div class="muted" style="font-size: 0.75rem">Fuel</div>
@@ -44,26 +49,27 @@
 
         <div v-if="driver" class="driver-card">
           <div class="avatar">
-            <img v-if="driver.photoUrl || driver.avatarUrl" :src="driver.photoUrl || driver.avatarUrl" alt="" />
+            <img v-if="driverPhoto" :src="driverPhoto" alt="" />
             <span v-else>{{ initials(driver.name) }}</span>
           </div>
-          <div style="flex: 1">
+          <div class="driver-card__meta">
             <strong>{{ driver.name || 'Driver' }}</strong>
-            <div class="muted" style="font-size: 0.85rem">
-              {{ driver.vehiclePlate || driver.plateNumber || 'Bike' }}
-              <span v-if="driver.rating"> · ★ {{ Number(driver.rating).toFixed(1) }}</span>
-            </div>
+            <span>Driver · {{ driver.vehiclePlate || driver.plateNumber || '—' }}</span>
+            <span v-if="Number(driver.rating) > 0" class="stars">
+              <i v-for="n in 5" :key="n" :class="{ on: n <= Math.round(Number(driver.rating)) }">★</i>
+              {{ Number(driver.rating).toFixed(1) }}
+            </span>
           </div>
-          <a v-if="driver.phone" class="btn btn-ghost btn-sm" :href="`tel:${driver.phone}`">Call</a>
+          <a v-if="driver.phone" class="call-btn" :href="`tel:${driver.phone}`" aria-label="Call driver">
+            <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M7.2 3.6c.4-.4 1-.5 1.5-.3l2.2.9c.5.2.8.7.8 1.2l-.2 2.4a1.2 1.2 0 0 1-.7 1l-1.3.6a10.6 10.6 0 0 0 4.9 4.9l.6-1.3c.2-.4.6-.7 1-.7l2.4-.2c.5 0 1 .3 1.2.8l.9 2.2c.2.5.1 1.1-.3 1.5l-1.5 1.5c-.4.4-1 .6-1.6.5C10.6 18.2 5.8 13.4 5.2 6.7c-.1-.6.1-1.2.5-1.6l1.5-1.5Z"/></svg>
+          </a>
         </div>
 
-        <div v-if="needsPayment" class="pay-block">
-          <p class="eyebrow">Payment due</p>
-          <p class="sheet-sub" style="margin-bottom: 10px">
-            Pay {{ formatGhs(order.totalAmount) }} via {{ paymentLabel(order.paymentMethod) }}
-          </p>
+        <div v-if="needsPayment && driver" class="pay-due">
+          <strong>{{ driver.name || 'Your driver' }} is ready to deliver</strong>
+          <p>Complete your {{ paymentLabel(order.paymentMethod) }} payment so they can start your delivery.</p>
           <button class="btn btn-accent btn-block" :disabled="paying" @click="startPay">
-            {{ paying ? 'Opening checkout…' : 'Pay now →' }}
+            {{ paying ? 'Opening checkout…' : `Pay ${formatGhs(order.totalAmount)}` }}
           </button>
           <p v-if="payError" class="error-text" style="margin-top: 8px">{{ payError }}</p>
           <p v-if="paySuccess" class="chip chip-success" style="margin-top: 10px">Payment confirmed</p>
@@ -115,6 +121,7 @@ import {
   fetchDrivingRoute,
 } from '~/utils/format'
 import { openPaystackPopup } from '~/composables/usePaystackCheckout'
+import { resolveMediaUrl } from '~/utils/media'
 
 definePageMeta({ layout: 'customer' })
 
@@ -176,13 +183,15 @@ const hydrateDriverFromOrder = (force = false) => {
   if (p) driverPos.value = p
 }
 
+const driverPhoto = computed(() => resolveMediaUrl(driver.value?.photoUrl || driver.value?.avatar))
+
 const driver = computed(() => {
   const d = order.value?.driverId
   if (!d) return null
   if (typeof d !== 'object') return order.value?.driver || null
   return {
     ...d,
-    photoUrl: d.photoUrl || d.avatarUrl || d.driverProfile?.photoUrl,
+    photoUrl: d.photoUrl || d.avatarUrl || d.avatar || d.driverProfile?.photoUrl,
     vehiclePlate: d.vehiclePlate || d.plateNumber || d.driverProfile?.vehiclePlate,
     rating: d.rating ?? d.driverProfile?.rating,
     phone: d.phone,
@@ -244,6 +253,13 @@ const needsPayment = computed(() => {
   if (order.value.paymentStatus === 'paid') return false
   const assigned = ['assigned', 'en_route', 'arrived'].includes(order.value.status)
   return assigned
+})
+
+const findingDriver = computed(() => {
+  const status = order.value?.status
+  if (!status || status === 'cancelled' || status === 'delivered') return false
+  if (driver.value) return false
+  return status === 'pending' || status === 'confirmed'
 })
 
 const canCancel = computed(() => {
@@ -487,6 +503,32 @@ onBeforeUnmount(() => {
 .track-page {
   /* fill shell */
 }
+.searching {
+  margin: 10px 0 4px;
+}
+.searching__bar {
+  height: 4px;
+  border-radius: 4px;
+  background: var(--border);
+  overflow: hidden;
+}
+.searching__bar span {
+  display: block;
+  height: 100%;
+  width: 40%;
+  border-radius: 4px;
+  background: var(--ink);
+  animation: rider-search 1.2s ease-in-out infinite;
+}
+.searching p {
+  margin-top: 8px;
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+@keyframes rider-search {
+  0% { transform: translateX(-120%); }
+  100% { transform: translateX(280%); }
+}
 .top-bar {
   top: 16px;
   left: 16px;
@@ -533,13 +575,91 @@ onBeforeUnmount(() => {
 .driver-card {
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 12px 0;
-  border-top: 1px solid var(--border);
-  border-bottom: 1px solid var(--border);
-  margin: 8px 0 14px;
+  gap: 14px;
+  margin: 12px 0;
+  padding: 14px;
+  border-radius: 16px;
+  background: var(--paper);
+  border: 1px solid var(--border);
 }
-.pay-block,
+.driver-card .avatar {
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  overflow: hidden;
+  background: var(--ink);
+  color: #fff;
+  display: grid;
+  place-items: center;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+.driver-card .avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.driver-card__meta {
+  flex: 1;
+  min-width: 0;
+}
+.driver-card__meta strong {
+  display: block;
+  font-size: 1rem;
+  font-weight: 600;
+}
+.driver-card__meta span {
+  display: block;
+  margin-top: 2px;
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+.stars {
+  color: var(--ink);
+  letter-spacing: 1px;
+}
+.stars i {
+  font-style: normal;
+  color: var(--border);
+}
+.stars i.on {
+  color: #e6a800;
+}
+.call-btn {
+  width: 42px;
+  height: 42px;
+  border-radius: 50%;
+  background: var(--accent);
+  color: #fff;
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+}
+.call-btn svg {
+  width: 18px;
+  height: 18px;
+}
+.pay-due {
+  margin-top: 12px;
+  padding: 16px;
+  border-radius: 16px;
+  background: var(--ink);
+  color: #fff;
+}
+.pay-due strong {
+  display: block;
+  font-size: 0.95rem;
+  font-weight: 600;
+}
+.pay-due p {
+  margin: 6px 0 14px;
+  color: rgba(255, 255, 255, 0.75);
+  font-size: 0.82rem;
+  line-height: 1.4;
+}
+.pay-due .btn {
+  border-radius: 999px;
+}
 .rate-block {
   margin-top: 14px;
   padding: 14px;
