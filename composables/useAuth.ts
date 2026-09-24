@@ -52,6 +52,9 @@ export const useAuth = () => {
       token.value = data.accessToken
       refreshToken.value = data.refreshToken || null
       persistUser(data.user)
+      // useCookie writes document.cookie in a watcher. Wait so route
+      // middleware sees the session before the next navigation.
+      await nextTick()
       return data.user
     } catch (e: any) {
       error.value = e.message || 'Invalid code'

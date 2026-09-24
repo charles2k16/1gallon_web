@@ -3,5 +3,6 @@
     <NuxtLayout>
       <NuxtPage />
     </NuxtLayout>
+    <InstallPrompt />
   </div>
 </template>

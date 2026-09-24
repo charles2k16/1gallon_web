@@ -20,8 +20,16 @@ export default defineNuxtConfig({
         { name: 'description', content: 'Fuel delivered to your door' },
         { name: 'apple-mobile-web-app-capable', content: 'yes' },
         { name: 'mobile-web-app-capable', content: 'yes' },
+        { name: 'apple-mobile-web-app-title', content: '1Gallon' },
+        { name: 'apple-mobile-web-app-status-bar-style', content: 'black-translucent' },
+        { name: 'application-name', content: '1Gallon' },
       ],
       link: [
+        { rel: 'icon', href: '/favicon.ico', sizes: 'any' },
+        { rel: 'icon', type: 'image/png', sizes: '32x32', href: '/icons/favicon-32.png' },
+        { rel: 'icon', type: 'image/png', sizes: '192x192', href: '/icons/icon-192.png' },
+        { rel: 'apple-touch-icon', href: '/icons/apple-touch-icon.png' },
+        { rel: 'manifest', href: '/manifest.webmanifest' },
         { rel: 'preconnect', href: 'https://fonts.googleapis.com' },
         { rel: 'preconnect', href: 'https://fonts.gstatic.com', crossorigin: '' },
         {

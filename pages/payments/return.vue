@@ -4,12 +4,16 @@
       <div class="spinner" />
       <p class="muted">{{ message }}</p>
       <p v-if="error" class="error-text">{{ error }}</p>
-      <button v-if="done" class="btn btn-primary" @click="goBack">Continue</button>
+      <button v-if="done && !embedded" class="btn btn-primary" @click="goBack">Continue</button>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
+/**
+ * Paystack redirect callback (fallback). Prefer in-page popup on tracking.
+ * When opened inside the checkout iframe (?embedded=1), notify the parent.
+ */
 definePageMeta({ layout: 'blank' })
 
 const route = useRoute()
@@ -18,10 +22,20 @@ const message = ref('Confirming payment…')
 const error = ref('')
 const done = ref(false)
 const orderId = ref('')
+const embedded = computed(() => String(route.query.embedded || '') === '1')
 
 const goBack = () => {
   if (orderId.value) navigateTo(`/tracking/${orderId.value}`)
   else navigateTo('/home')
+}
+
+const notifyParent = (payload: Record<string, unknown>) => {
+  if (!import.meta.client || !embedded.value) return
+  try {
+    window.parent?.postMessage({ source: '1gallon-paystack', ...payload }, window.location.origin)
+  } catch {
+    /* ignore */
+  }
 }
 
 onMounted(async () => {
@@ -36,6 +50,7 @@ onMounted(async () => {
     error.value = 'Missing payment reference'
     done.value = true
     message.value = 'Could not verify payment'
+    notifyParent({ type: 'pay_error', orderId: orderId.value })
     return
   }
 
@@ -43,11 +58,13 @@ onMounted(async () => {
     await get(`/payments/verify/${encodeURIComponent(reference)}`)
     message.value = 'Payment confirmed'
     done.value = true
-    setTimeout(goBack, 1200)
+    notifyParent({ type: 'pay_success', reference, orderId: orderId.value })
+    if (!embedded.value) setTimeout(goBack, 900)
   } catch (e: any) {
     error.value = e.message || 'Verification failed'
     message.value = 'Payment not confirmed yet'
     done.value = true
+    notifyParent({ type: 'pay_pending', reference, orderId: orderId.value })
   }
 })
 </script>

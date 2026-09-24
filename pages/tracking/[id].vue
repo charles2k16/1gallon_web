@@ -11,7 +11,18 @@
 
     <div class="map-float top-bar">
       <button class="locate-btn" type="button" @click="navigateTo('/home')">←</button>
+      <button
+        v-if="driverPos || deliveryPos"
+        class="locate-btn fit-btn"
+        type="button"
+        title="Fit trip"
+        @click="fitTrip"
+      >
+        ◎
+      </button>
     </div>
+
+    <div v-if="etaLabel" class="map-float eta-chip">{{ etaLabel }}</div>
 
     <BottomSheet tall>
       <div v-if="loading && !order" class="center-load"><div class="spinner" /></div>
@@ -52,9 +63,10 @@
             Pay {{ formatGhs(order.totalAmount) }} via {{ paymentLabel(order.paymentMethod) }}
           </p>
           <button class="btn btn-accent btn-block" :disabled="paying" @click="startPay">
-            {{ paying ? 'Opening Paystack…' : 'Pay now →' }}
+            {{ paying ? 'Opening checkout…' : 'Pay now →' }}
           </button>
           <p v-if="payError" class="error-text" style="margin-top: 8px">{{ payError }}</p>
+          <p v-if="paySuccess" class="chip chip-success" style="margin-top: 10px">Payment confirmed</p>
         </div>
 
         <div v-if="order.status === 'delivered' && !order.rating" class="rate-block">
@@ -81,6 +93,14 @@
       </template>
       <div v-else class="empty">Order not found</div>
     </BottomSheet>
+
+    <PaystackCheckoutModal
+      :open="sheetOpen"
+      :authorization-url="sheetUrl"
+      :busy="verifying"
+      @close="closeSheet"
+      @done="verifyAndFinish"
+    />
   </div>
 </template>
 
@@ -94,6 +114,7 @@ import {
   latLngFromCoords,
   fetchDrivingRoute,
 } from '~/utils/format'
+import { openPaystackPopup } from '~/composables/usePaystackCheckout'
 
 definePageMeta({ layout: 'customer' })
 
@@ -107,18 +128,66 @@ const order = ref<any>(null)
 const loading = ref(true)
 const busy = ref(false)
 const paying = ref(false)
+const verifying = ref(false)
 const payError = ref('')
+const paySuccess = ref(false)
 const actionError = ref('')
 const rating = ref(0)
 const ratingBusy = ref(false)
 const driverPos = ref<{ lat: number; lng: number } | null>(null)
 const routePoints = ref<{ lat: number; lng: number }[]>([])
+const sheetOpen = ref(false)
+const sheetUrl = ref('')
+const payReference = ref('')
+const routeMeta = ref<{ distanceMeters: number; durationSeconds: number } | null>(null)
+let pollTimer: ReturnType<typeof setInterval> | null = null
+let locationPoll: ReturnType<typeof setInterval> | null = null
+let routeTimer: ReturnType<typeof setTimeout> | null = null
+let didFit = false
+
+const stopPoll = () => {
+  if (pollTimer) {
+    clearInterval(pollTimer)
+    pollTimer = null
+  }
+}
+
+const closeSheet = () => {
+  stopPoll()
+  sheetOpen.value = false
+  sheetUrl.value = ''
+  paying.value = false
+  verifying.value = false
+}
+
+const subscribeOrder = () => {
+  emit('order:subscribe', orderId.value)
+}
+
+const hydrateDriverFromOrder = (force = false) => {
+  if (driverPos.value && !force) return
+  const d = order.value?.driverId
+  if (!d || typeof d !== 'object') return
+  const coords =
+    d.driverProfile?.currentLocation?.coordinates ||
+    d.currentLocation?.coordinates ||
+    d.location?.coordinates
+  const p = latLngFromCoords(coords)
+  if (p) driverPos.value = p
+}
 
 const driver = computed(() => {
   const d = order.value?.driverId
   if (!d) return null
-  if (typeof d === 'object') return d
-  return order.value?.driver || null
+  if (typeof d !== 'object') return order.value?.driver || null
+  return {
+    ...d,
+    photoUrl: d.photoUrl || d.avatarUrl || d.driverProfile?.photoUrl,
+    vehiclePlate: d.vehiclePlate || d.plateNumber || d.driverProfile?.vehiclePlate,
+    rating: d.rating ?? d.driverProfile?.rating,
+    phone: d.phone,
+    name: d.name,
+  }
 })
 
 const deliveryPos = computed(() => latLngFromCoords(order.value?.deliveryLocation?.coordinates))
@@ -132,13 +201,42 @@ const mapCenter = computed(() => {
 const markers = computed(() => {
   const m: any[] = []
   if (deliveryPos.value) {
-    m.push({ id: 'drop', ...deliveryPos.value, color: '#e84b1a', label: 'You' })
+    m.push({
+      id: 'drop',
+      ...deliveryPos.value,
+      color: '#e84b1a',
+      label: 'You',
+      kind: 'drop',
+    })
   }
   if (driverPos.value) {
-    m.push({ id: 'driver', ...driverPos.value, color: '#0d0d0d', label: 'Driver' })
+    m.push({
+      id: 'driver',
+      ...driverPos.value,
+      color: '#0d0d0d',
+      label: driver.value?.name || 'Driver',
+      kind: 'driver',
+    })
   }
   return m
 })
+
+const etaLabel = computed(() => {
+  if (!routeMeta.value) return ''
+  const mins = Math.max(1, Math.ceil(routeMeta.value.durationSeconds / 60))
+  const km = routeMeta.value.distanceMeters / 1000
+  const dist = km >= 1 ? `${km.toFixed(1)} km` : `${Math.round(routeMeta.value.distanceMeters)} m`
+  return `${mins} min · ${dist}`
+})
+
+const fitTrip = () => {
+  const pts = [
+    ...(driverPos.value ? [driverPos.value] : []),
+    ...(deliveryPos.value ? [deliveryPos.value] : []),
+    ...routePoints.value,
+  ]
+  mapRef.value?.fitBounds?.(pts, { top: 72, bottom: 320, left: 40, right: 40 })
+}
 
 const needsPayment = computed(() => {
   if (!order.value) return false
@@ -163,47 +261,155 @@ const initials = (name?: string) => {
     .toUpperCase()
 }
 
-const load = async () => {
-  loading.value = true
+const load = async (opts: { silent?: boolean } = {}) => {
+  if (!opts.silent) loading.value = true
   try {
     const res = await get(`/orders/${orderId.value}`)
     order.value = res.data?.order || res.data
-    emit('order:subscribe', { orderId: orderId.value })
+    hydrateDriverFromOrder(true)
+    subscribeOrder()
     await updateRoute()
   } catch {
-    order.value = null
+    if (!opts.silent) order.value = null
   } finally {
-    loading.value = false
+    if (!opts.silent) loading.value = false
   }
 }
 
 const updateRoute = async () => {
   if (!driverPos.value || !deliveryPos.value) {
     routePoints.value = []
+    routeMeta.value = null
     return
   }
   const info = await fetchDrivingRoute(driverPos.value, deliveryPos.value)
-  routePoints.value = info?.points || [driverPos.value, deliveryPos.value]
+  if (info?.points?.length) {
+    routePoints.value = info.points
+    routeMeta.value = {
+      distanceMeters: info.distanceMeters,
+      durationSeconds: info.durationSeconds,
+    }
+  } else {
+    // Straight-line fallback like Flutter
+    routePoints.value = [driverPos.value, deliveryPos.value]
+    routeMeta.value = null
+  }
+  if (!didFit) {
+    didFit = true
+    nextTick(() => fitTrip())
+  }
+}
+
+const scheduleRoute = () => {
+  if (routeTimer) clearTimeout(routeTimer)
+  routeTimer = setTimeout(() => {
+    updateRoute()
+  }, 1200)
+}
+
+const verifyPayment = async (reference: string) => {
+  const res = await get(`/payments/verify/${encodeURIComponent(reference)}`)
+  const data = res.data || res
+  return data.paid === true || data.paymentStatus === 'paid'
+}
+
+const onPaymentConfirmed = async () => {
+  paySuccess.value = true
+  payError.value = ''
+  closeSheet()
+  await load()
+}
+
+const verifyAndFinish = async () => {
+  if (!payReference.value || verifying.value) return
+  verifying.value = true
+  try {
+    const paid = await verifyPayment(payReference.value)
+    if (paid) {
+      await onPaymentConfirmed()
+    } else {
+      payError.value = 'Payment not confirmed yet — tap Done again after completing checkout'
+    }
+  } catch (e: any) {
+    payError.value = e.message || 'Could not verify payment'
+  } finally {
+    verifying.value = false
+    paying.value = false
+  }
+}
+
+const startSheetFallback = (authorizationUrl: string, reference: string) => {
+  sheetUrl.value = authorizationUrl
+  payReference.value = reference
+  sheetOpen.value = true
+  stopPoll()
+  // Poll while sheet is open (iframe can't report success cross-origin)
+  pollTimer = setInterval(async () => {
+    try {
+      const paid = await verifyPayment(reference)
+      if (paid) await onPaymentConfirmed()
+    } catch {
+      /* keep polling */
+    }
+  }, 4000)
 }
 
 const startPay = async () => {
   paying.value = true
   payError.value = ''
+  paySuccess.value = false
   try {
     const res = await post('/payments/initialize', { orderId: orderId.value })
     const data = res.data || res
-    const url = data.authorizationUrl || data.authorization_url
-    if (!url) throw new Error('No payment URL returned')
-    // Store reference for return page
-    if (import.meta.client && data.reference) {
-      sessionStorage.setItem('pay_ref', data.reference)
-      sessionStorage.setItem('pay_order', orderId.value)
+    if (data.paid === true) {
+      await onPaymentConfirmed()
+      return
     }
-    window.location.href = url
+    const url = data.authorizationUrl || data.authorization_url
+    const reference = data.reference as string | undefined
+    const accessCode = (data.accessCode || data.access_code) as string | undefined
+    if (!reference) throw new Error('No payment reference returned')
+
+    payReference.value = reference
+
+    // Prefer in-page Paystack popup (same idea as Flutter sheet)
+    if (accessCode) {
+      try {
+        const result = await openPaystackPopup({ accessCode, reference })
+        if (result.paid) {
+          const paid = await verifyPayment(result.reference || reference)
+          if (paid) {
+            await onPaymentConfirmed()
+            return
+          }
+          payError.value = 'Payment submitted — confirming…'
+          // One more verify pass
+          await new Promise((r) => setTimeout(r, 800))
+          if (await verifyPayment(reference)) {
+            await onPaymentConfirmed()
+            return
+          }
+        }
+        if (result.cancelled) {
+          payError.value = ''
+          return
+        }
+        if (result.error) {
+          // Fall through to sheet
+          console.warn('[pay]', result.error)
+        }
+      } catch (e) {
+        console.warn('[pay] popup unavailable, using sheet', e)
+      }
+    }
+
+    if (!url) throw new Error('No payment URL returned')
+    startSheetFallback(url, reference)
   } catch (e: any) {
     payError.value = e.message || 'Payment failed to start'
-  } finally {
     paying.value = false
+  } finally {
+    if (!sheetOpen.value) paying.value = false
   }
 }
 
@@ -233,21 +439,47 @@ const submitRating = async () => {
   }
 }
 
+const onPayMessage = async (ev: MessageEvent) => {
+  if (ev.origin !== window.location.origin) return
+  const data = ev.data
+  if (!data || data.source !== '1gallon-paystack') return
+  if (data.type === 'pay_success') {
+    if (data.reference) payReference.value = String(data.reference)
+    await onPaymentConfirmed()
+  }
+}
+
 onMounted(async () => {
-  connect()
+  const sock = connect()
+  sock?.on('connect', subscribeOrder)
   await load()
   on('order:updated', (payload: any) => {
     const id = payload?.orderId || payload?._id || payload?.order?._id
-    if (!id || String(id) === orderId.value) load()
+    if (id && String(id) !== orderId.value) return
+    load({ silent: true })
   })
-  on('order:cancelled', () => load())
+  on('order:cancelled', () => load({ silent: true }))
   on('driver:location', (payload: any) => {
     if (payload?.orderId && String(payload.orderId) !== orderId.value) return
     if (payload?.lat != null && payload?.lng != null) {
       driverPos.value = { lat: Number(payload.lat), lng: Number(payload.lng) }
-      updateRoute()
+      scheduleRoute()
     }
   })
+  // Backup poll — refresh driver coords from API if sockets are quiet
+  locationPoll = setInterval(() => {
+    if (['delivered', 'cancelled'].includes(order.value?.status)) return
+    load({ silent: true })
+  }, 15000)
+  window.addEventListener('message', onPayMessage)
+})
+
+onBeforeUnmount(() => {
+  stopPoll()
+  if (locationPoll) clearInterval(locationPoll)
+  if (routeTimer) clearTimeout(routeTimer)
+  emit('order:unsubscribe', orderId.value)
+  window.removeEventListener('message', onPayMessage)
 })
 </script>
 
@@ -258,6 +490,10 @@ onMounted(async () => {
 .top-bar {
   top: 16px;
   left: 16px;
+  right: 16px;
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
 }
 .locate-btn {
   width: 44px;
@@ -267,6 +503,24 @@ onMounted(async () => {
   box-shadow: var(--shadow);
   font-size: 1.1rem;
   font-weight: 600;
+}
+.fit-btn {
+  font-size: 1.05rem;
+}
+.eta-chip {
+  top: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 6;
+  background: var(--ink);
+  color: var(--paper);
+  padding: 8px 14px;
+  border-radius: 999px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  box-shadow: var(--shadow);
+  white-space: nowrap;
 }
 .quote-mini {
   display: flex;

@@ -3,7 +3,7 @@ export default defineNuxtRouteMiddleware(async (to) => {
   const auth = useAuth()
   auth.restoreUser()
 
-  const publicPaths = ['/auth', '/payments/return']
+  const publicPaths = ['/auth', '/payments/return', '/profile/terms', '/profile/privacy']
   const isPublic = publicPaths.some((p) => to.path === p || to.path.startsWith(p + '/'))
 
   if (!token.value && !isPublic && to.path !== '/') {

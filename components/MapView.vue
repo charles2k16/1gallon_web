@@ -19,6 +19,7 @@ const props = withDefaults(
       lng: number
       color?: string
       label?: string
+      kind?: 'driver' | 'drop' | 'pin'
     }>
     route?: Array<{ lat: number; lng: number }>
   }>(),
@@ -79,6 +80,33 @@ const setCenter = (lat: number, lng: number) => {
   map.setCenter([lng, lat])
 }
 
+const fitBounds = (
+  points: Array<{ lat: number; lng: number }>,
+  padding: number | { top: number; bottom: number; left: number; right: number } = 56,
+) => {
+  if (!map || !points.length) return
+  if (points.length === 1) {
+    programmatic = true
+    map.flyTo({ center: [points[0].lng, points[0].lat], zoom: 15, essential: true })
+    return
+  }
+  const bounds = new maplibregl.LngLatBounds(
+    [points[0].lng, points[0].lat],
+    [points[0].lng, points[0].lat],
+  )
+  for (const p of points) bounds.extend([p.lng, p.lat])
+  programmatic = true
+  map.easeTo({ pitch: 0, duration: 200 })
+  map.fitBounds(bounds, {
+    padding:
+      typeof padding === 'number'
+        ? padding
+        : padding,
+    maxZoom: 16,
+    duration: 700,
+  })
+}
+
 const forceResize = () => {
   map?.resize()
 }
@@ -110,10 +138,22 @@ const syncMarkers = () => {
   }
   for (const m of props.markers) {
     const el = document.createElement('div')
-    el.className = 'map-marker'
-    el.style.background = m.color || '#e84b1a'
+    const kind = m.kind || 'pin'
+    el.className = `map-marker map-marker--${kind}`
+    if (kind === 'drop') {
+      el.innerHTML = `<div class="map-drop-pin" style="--c:${m.color || '#e84b1a'}"></div>`
+    } else if (kind === 'driver') {
+      el.innerHTML = `<div class="map-driver-dot" style="--c:${m.color || '#0d0d0d'}"><span></span></div>`
+    } else {
+      el.style.background = m.color || '#e84b1a'
+    }
     if (m.label) el.title = m.label
-    const marker = new maplibregl.Marker({ element: el }).setLngLat([m.lng, m.lat]).addTo(map)
+    const marker = new maplibregl.Marker({
+      element: el,
+      anchor: kind === 'drop' ? 'bottom' : 'center',
+    })
+      .setLngLat([m.lng, m.lat])
+      .addTo(map)
     extraMarkers.push(marker)
   }
 }
@@ -123,29 +163,38 @@ const syncRoute = () => {
   const srcId = 'route'
   const layerId = 'route-line'
   const coords = props.route.map((p) => [p.lng, p.lat])
+
+  if (!coords.length) {
+    if (map.getLayer(layerId)) map.removeLayer(layerId)
+    if (map.getSource(srcId)) map.removeSource(srcId)
+    return
+  }
+
+  const geojson = {
+    type: 'Feature' as const,
+    properties: {},
+    geometry: { type: 'LineString' as const, coordinates: coords },
+  }
+
   if (!map.getSource(srcId)) {
-    if (!coords.length) return
-    map.addSource(srcId, {
-      type: 'geojson',
-      data: { type: 'Feature', properties: {}, geometry: { type: 'LineString', coordinates: coords } },
-    })
+    map.addSource(srcId, { type: 'geojson', data: geojson })
     map.addLayer({
       id: layerId,
       type: 'line',
       source: srcId,
+      layout: {
+        'line-join': 'round',
+        'line-cap': 'round',
+      },
       paint: {
         'line-color': '#1a73e8',
         'line-width': 5,
-        'line-opacity': 0.9,
+        'line-opacity': 0.92,
       },
     })
   } else {
     const src = map.getSource(srcId) as any
-    src.setData({
-      type: 'Feature',
-      properties: {},
-      geometry: { type: 'LineString', coordinates: coords },
-    })
+    src.setData(geojson)
   }
 }
 
@@ -170,10 +219,7 @@ const applyInteractive = (v: boolean) => {
 const onStyleReady = () => {
   if (!map) return
   forceResize()
-  if (map.getZoom() >= 14) {
-    programmatic = true
-    map.easeTo({ pitch: 45, duration: 700 })
-  }
+  // Keep flat for trip tracking unless user tilts manually
   syncPin()
   syncMarkers()
   if (props.route.length) syncRoute()
@@ -288,7 +334,7 @@ onBeforeUnmount(() => {
   map = null
 })
 
-defineExpose({ flyTo, setCenter, getMap: () => map, resize: forceResize })
+defineExpose({ flyTo, setCenter, fitBounds, getMap: () => map, resize: forceResize })
 </script>
 
 <style>
@@ -344,6 +390,46 @@ defineExpose({ flyTo, setCenter, getMap: () => map, resize: forceResize })
   border-radius: 50%;
   border: 2px solid #fff;
   box-shadow: 0 2px 6px rgba(0, 0, 0, 0.3);
+}
+.map-marker--drop {
+  width: 28px;
+  height: 36px;
+  border: none;
+  background: transparent;
+  box-shadow: none;
+}
+.map-drop-pin {
+  width: 22px;
+  height: 22px;
+  border-radius: 50% 50% 50% 0;
+  background: var(--c, #e84b1a);
+  transform: rotate(-45deg);
+  border: 3px solid #fff;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.28);
+  margin: 0 auto;
+}
+.map-marker--driver {
+  width: 36px;
+  height: 36px;
+  border: none;
+  background: transparent;
+  box-shadow: none;
+}
+.map-driver-dot {
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  background: #fff;
+  border: 3px solid var(--c, #0d0d0d);
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.28);
+  display: grid;
+  place-items: center;
+}
+.map-driver-dot span {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--c, #0d0d0d);
 }
 
 .maplibre-map .maplibregl-ctrl-group {
