@@ -16,7 +16,7 @@
         </span>
         <span class="role__chev">›</span>
       </button>
-      <button class="role role--driver" type="button" @click="pickRole('driver')">
+      <button class="role role--driver" type="button" @click="openDriver">
         <span class="role__ico role__ico--dark" v-html="icons.bike" />
         <span class="role__copy">
           <strong>Driver</strong>
@@ -24,6 +24,64 @@
         </span>
         <span class="role__chev">›</span>
       </button>
+    </div>
+
+    <div v-else-if="step === 'driver'" class="form">
+      <button class="role role--driver" type="button" @click="pickRole('driver')">
+        <span class="role__copy">
+          <strong>Sign in</strong>
+          <span>Use the phone on your driver account</span>
+        </span>
+        <span class="role__chev">›</span>
+      </button>
+      <button class="role" type="button" @click="startSignup">
+        <span class="role__copy">
+          <strong>Sign up as a driver</strong>
+          <span>Apply with your bike details. We review before you go online.</span>
+        </span>
+        <span class="role__chev">›</span>
+      </button>
+      <button class="link" type="button" @click="step = 'role'">← Back</button>
+    </div>
+
+    <div v-else-if="step === 'signup'" class="form">
+      <div class="chip chip--dark">
+        <span class="chip__ico" v-html="icons.bikeSm" />
+        New driver application
+      </div>
+      <label class="lbl" for="name">FULL NAME</label>
+      <input id="name" v-model="signup.name" class="phone" autocomplete="name" placeholder="Ama Mensah" />
+      <label class="lbl" for="signup-phone">PHONE NUMBER</label>
+      <input id="signup-phone" v-model="signup.phone" class="phone" type="tel" inputmode="tel" placeholder="0541234567" />
+      <label class="lbl" for="plate">PLATE NUMBER</label>
+      <input id="plate" v-model="signup.vehiclePlate" class="phone" placeholder="M-23A-26" />
+      <div class="pair">
+        <div>
+          <label class="lbl" for="make">MAKE</label>
+          <input id="make" v-model="signup.vehicleMake" class="phone" placeholder="Royal" />
+        </div>
+        <div>
+          <label class="lbl" for="model">MODEL</label>
+          <input id="model" v-model="signup.vehicleModel" class="phone" placeholder="Juhuan 12A" />
+        </div>
+      </div>
+      <div class="pair">
+        <div>
+          <label class="lbl" for="color">COLOR</label>
+          <input id="color" v-model="signup.vehicleColor" class="phone" placeholder="Blue" />
+        </div>
+        <div>
+          <label class="lbl" for="license">LICENSE NO.</label>
+          <input id="license" v-model="signup.licenseNumber" class="phone" placeholder="GH…" />
+        </div>
+      </div>
+      <p class="hint">We'll text a code, then review your application before you can go online.</p>
+      <p v-if="error" class="error-text">{{ error }}</p>
+      <button class="send" type="button" :disabled="loading" @click="sendSignup">
+        <span v-if="loading" class="spinner spinner--light" />
+        <span v-else>SEND CODE →</span>
+      </button>
+      <button class="link" type="button" @click="step = 'driver'">← Back</button>
     </div>
 
     <div v-else-if="step === 'phone'" class="form">
@@ -46,7 +104,7 @@
         {{
           intent === 'customer'
             ? 'New numbers are signed up automatically'
-            : 'Use the phone number on your driver account'
+            : 'Use the phone number on your driver account. New here? Sign up instead.'
         }}
       </p>
       <p v-if="error" class="error-text">{{ error }}</p>
@@ -54,7 +112,10 @@
         <span v-if="loading" class="spinner spinner--light" />
         <span v-else>SEND CODE →</span>
       </button>
-      <button class="link" type="button" @click="step = 'role'">← Choose a different role</button>
+      <button v-if="intent === 'driver'" class="link" type="button" @click="startSignup">New driver? Apply here</button>
+      <button class="link" type="button" @click="step = intent === 'driver' ? 'driver' : 'role'">
+        {{ intent === 'driver' ? '← Back' : '← Choose a different role' }}
+      </button>
     </div>
 
     <div v-else class="form">
@@ -98,7 +159,17 @@ import type { AppRole } from '~/composables/useAuth'
 definePageMeta({ layout: 'blank' })
 
 const auth = useAuth()
-const step = ref<'role' | 'phone' | 'otp'>('role')
+const step = ref<'role' | 'driver' | 'signup' | 'phone' | 'otp'>('role')
+const signup = reactive({
+  name: '',
+  phone: '',
+  vehiclePlate: '',
+  vehicleMake: '',
+  vehicleModel: '',
+  vehicleColor: '',
+  licenseNumber: '',
+  vehicleType: 'motorbike',
+})
 const intent = ref<AppRole>('customer')
 const phone = ref('')
 const digits = ref<string[]>(['', '', '', '', '', ''])
@@ -116,12 +187,16 @@ const icons = {
 
 const headline = computed(() => {
   if (step.value === 'role') return 'SIGN IN'
+  if (step.value === 'driver') return 'DRIVER'
+  if (step.value === 'signup') return 'APPLY TO DRIVE'
   if (step.value === 'phone') return 'YOUR NUMBER'
   return 'ENTER CODE'
 })
 
 const subtitle = computed(() => {
   if (step.value === 'role') return 'Choose how you use 1Gallon, then verify with SMS.'
+  if (step.value === 'driver') return 'Sign in if you already drive with us, or apply as a new rider.'
+  if (step.value === 'signup') return 'Tell us who you are and what you ride. Approval happens in admin.'
   if (step.value === 'phone') {
     return intent.value === 'driver'
       ? "We'll text a code to verify your driver account."
@@ -134,6 +209,41 @@ const otpCode = computed(() => digits.value.join(''))
 
 const setOtpRef = (el: Element | null, i: number) => {
   otpRefs.value[i] = el as HTMLInputElement | null
+}
+
+const openDriver = () => {
+  auth.error.value = null
+  intent.value = 'driver'
+  step.value = 'driver'
+}
+
+const startSignup = () => {
+  auth.error.value = null
+  intent.value = 'driver'
+  step.value = 'signup'
+}
+
+const sendSignup = async () => {
+  auth.error.value = null
+  if (signup.name.trim().length < 2) {
+    auth.error.value = 'Enter your full name'
+    return
+  }
+  if (!signup.vehiclePlate.trim()) {
+    auth.error.value = 'Enter your plate number'
+    return
+  }
+  try {
+    canonical.value = toLocalGhanaPhone(signup.phone)
+    phone.value = canonical.value
+    await auth.requestOtp(canonical.value, 'driver', { ...signup, vehiclePlate: signup.vehiclePlate.trim().toUpperCase() })
+    digits.value = ['', '', '', '', '', '']
+    step.value = 'otp'
+    await nextTick()
+    otpRefs.value[0]?.focus()
+  } catch {
+    /* error on auth */
+  }
 }
 
 const pickRole = (role: AppRole) => {
@@ -263,6 +373,11 @@ const onPaste = (ev: ClipboardEvent) => {
   color: var(--ink);
 }
 
+.pair {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
 .role--driver {
   background: var(--ink);
   border: 1.5px solid var(--ink);

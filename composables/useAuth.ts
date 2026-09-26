@@ -29,11 +29,11 @@ export const useAuth = () => {
     if (import.meta.client) localStorage.removeItem('web_user')
   }
 
-  const requestOtp = async (phone: string, intent: AppRole) => {
+  const requestOtp = async (phone: string, intent: AppRole, signup?: Record<string, string>) => {
     loading.value = true
     error.value = null
     try {
-      const res = await post('/auth/request-otp', { phone, intent })
+      const res = await post('/auth/request-otp', { phone, intent, signup })
       return res
     } catch (e: any) {
       error.value = e.message || 'Could not send code'

@@ -9,7 +9,7 @@
         class="switch"
         type="button"
         :class="{ on: isOnline }"
-        :disabled="toggling"
+        :disabled="toggling || pendingReview"
         :aria-pressed="isOnline"
         @click="toggleOnline"
       >
@@ -17,6 +17,10 @@
         <span class="switch__label">{{ isOnline ? 'ONLINE' : 'OFFLINE' }}</span>
       </button>
     </header>
+
+    <p v-if="pendingReview" class="review">
+      Your application is with the team. You'll be able to go online once it's approved.
+    </p>
 
     <section class="hero">
       <div>
@@ -145,6 +149,11 @@ const busyId = ref('')
 const error = ref('')
 let pingTimer: any
 
+const pendingReview = computed(() => {
+  const status = auth.user.value?.driverProfile?.onboardingStatus
+  return !!status && status !== 'approved'
+})
+
 const isOnline = computed(() => {
   const u = auth.user.value
   return !!(u?.driverProfile?.isAvailable ?? u?.isAvailable)
@@ -225,6 +234,7 @@ const load = async () => {
 }
 
 const toggleOnline = async () => {
+  if (pendingReview.value) return
   toggling.value = true
   try {
     const next = !isOnline.value
@@ -313,6 +323,16 @@ onBeforeUnmount(() => {
   background: var(--paper);
 }
 
+.review {
+  margin: 0 0 14px;
+  padding: 12px 14px;
+  border-radius: 14px;
+  background: #fff6e8;
+  border: 1px solid rgba(232, 75, 26, 0.25);
+  color: var(--ink);
+  font-size: 13px;
+  line-height: 1.4;
+}
 .hello {
   display: flex;
   align-items: flex-start;
